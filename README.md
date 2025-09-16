@@ -40,3 +40,58 @@ serverless_heatmap/
 ### Start the PostGIS container
 ```bash
 docker compose up -d
+```
+
+### Connect to the database
+```bash
+psql -h localhost -U admin -d geodb
+
+```
+
+### Create schemas
+```bash
+CREATE SCHEMA IF NOT EXISTS ookla_tiles;
+CREATE SCHEMA IF NOT EXISTS cell_towers;
+
+```
+
+## 🌐 Data Sources
+
+### 1. Ookla Internet Speed Data
+- Public dataset on [AWS Open Data](https://registry.opendata.aws/speedtest-global-performance/).
+- Imported into PostGIS using GDAL (`ogr2ogr`) via a Docker GDAL image.
+- Normalized into a `geom` column for spatial queries.
+- Example Barbados subset exported as `ookla_bb_sample.geojson`.
+
+### 2. OpenCelliD Tower Data
+- Requires free API key from [OpenCelliD](https://opencellid.org/).
+- Download as CSV (global), filter to **Barbados MCC = 342**, then import into `cell_towers` schema.
+- Converted into `POINT` geometries in PostGIS.
+
+---
+
+## 🗺️ Frontend (Leaflet Map)
+- `index.html` provides a simple **Leaflet-based map**.
+- Loads `ookla_bb_sample.geojson` for Barbados.
+- Color-coded tiles show average download speeds.
+- Can be extended to load vector tiles (`ST_AsMVT`) from PostGIS.
+
+### To run locally
+```bash
+python -m http.server 8000
+
+````
+
+Then open:
+
+http://localhost:8000/index.html
+
+
+## 📜 License
+
+This project is for **educational/tutorial purposes**.
+
+**Data licensing**:  
+- Ookla Open Data: [Terms of Use](https://registry.opendata.aws/speedtest-global-performance/)  
+- OpenCelliD: [Open Database License (ODbL)](https://opencellid.org/license)  
+
