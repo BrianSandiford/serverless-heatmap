@@ -1,0 +1,19 @@
+services:
+  postgis:
+    image: postgis/postgis:latest
+    container_name: postgis_container
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: StrongPass123
+      POSTGRES_DB: geodb
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    networks:
+      - heatmapnet
+
+networks:
+  heatmapnet:
+    name: heatmapnet
