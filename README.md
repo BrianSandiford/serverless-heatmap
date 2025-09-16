@@ -25,3 +25,18 @@ serverless_heatmap/
 │── opencellid.csv              # Extracted OpenCelliD dataset (local use)
 │── pgdata/                     # PostGIS database volume (local only, ignored in .git)
 │── venv/                       # Python virtual environment (ignored in .git)
+```
+
+## 🛠️ Prerequisites
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- [Git](https://git-scm.com/)
+- [Python 3.x](https://www.python.org/downloads/)
+- Optional: [QGIS](https://qgis.org/) for deeper GIS analysis
+
+---
+
+## 🐘 Database Setup (PostGIS)
+
+### Start the PostGIS container
+```bash
+docker compose up -d
