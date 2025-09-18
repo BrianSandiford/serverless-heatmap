@@ -1,138 +1,133 @@
-d<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html>
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Ookla Barbados Sample — Leaflet Viewer</title>
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-    crossorigin=""
-  />
+  <title>Barbados • Towers vs Speed</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
-    html, body { height: 100%; margin: 0; }
-    #map { height: 100%; }
+    #map { height: 100vh; }
+    .mode-control {
+      background: #fff; padding: 6px 8px; border-radius: 4px;
+      box-shadow: 0 1px 5px rgba(0,0,0,0.4); font: 14px/1.2 system-ui, sans-serif;
+    }
     .legend {
-      background: white;
-      padding: 8px 10px;
-      line-height: 18px;
-      color: #555;
-      box-shadow: 0 0 10px rgba(0,0,0,0.15);
-      border-radius: 6px;
+      background: #fff; padding: 8px; border-radius: 4px;
+      line-height: 1.2; box-shadow: 0 1px 5px rgba(0,0,0,0.4);
     }
-    .legend i {
-      width: 14px;
-      height: 14px;
-      float: left;
-      margin-right: 8px;
-      opacity: 0.8;
-    }
-    .info {
-      background: white;
-      padding: 6px 10px;
-      border-radius: 6px;
-      box-shadow: 0 0 10px rgba(0,0,0,0.15);
-    }
+    .legend i { width: 14px; height: 14px; float: left; margin-right: 8px; opacity: .9; }
   </style>
 </head>
 <body>
   <div id="map"></div>
-  <script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-    crossorigin=""
-  ></script>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const map = L.map('map', { preferCanvas: true }).setView([13.15, -59.55], 10);
-    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19, attribution: '&copy; OpenStreetMap'
+    // --- Map ---
+    const map = L.map('map').setView([13.15, -59.55], 11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap'
     }).addTo(map);
 
-    function color(d) {
-      return d > 100000 ? '#00441b' :
-             d >  50000 ? '#1b7837' :
-             d >  20000 ? '#5aae61' :
-             d >  10000 ? '#a6dba0' :
-             d >   5000 ? '#d9f0d3' :
-             d >   1000 ? '#fddbc7' :
-             d >    500 ? '#f4a582' :
-             d >    100 ? '#d6604d' : '#b2182b';
+    // --- Color scales ---
+    function colorTowers(v){
+      return v > 20 ? '#08306b' :
+             v > 10 ? '#2171b5' :
+             v >  5 ? '#6baed6' :
+             v >  0 ? '#c6dbef' : '#f7fbff';
     }
-    function style(feature) {
-      const d = feature.properties?.avg_d_kbps ?? 0;
-      return {
-        fillColor: color(d),
-        weight: 0.5,
-        opacity: 1,
-        color: '#333',
-        fillOpacity: 0.6
-      };
+    // speeds are in kbps; tweak bins as you like
+    function colorSpeed(v){
+      return v > 50000 ? '#00441b' :
+             v > 30000 ? '#1b7837' :
+             v > 15000 ? '#5aae61' :
+             v >  8000 ? '#a6dba0' :
+             v >  4000 ? '#d9f0d3' : '#f7fcf5';
     }
 
-    const info = L.control({position: 'topright'});
-    info.onAdd = function () {
-      this._div = L.DomUtil.create('div', 'info');
-      this.update();
-      return this._div;
-    };
-    info.update = function (props) {
-      if (!props) {
-        this._div.innerHTML = '<b>Hover a tile</b>';
-      } else {
-        this._div.innerHTML =
-          '<b>Tile</b>: ' + (props.tile || '(n/a)') + '<br/>' +
-          '<b>Download</b>: ' + (props.avg_d_kbps ?? 'n/a') + ' kbps<br/>' +
-          '<b>Upload</b>: ' + (props.avg_u_kbps ?? 'n/a') + ' kbps<br/>' +
-          '<b>Tests</b>: ' + (props.tests ?? 'n/a');
-      }
-    };
-    info.addTo(map);
-
+    let currentMode = 'towers'; // 'towers' or 'speed'
+    let layer;                  // the GeoJSON layer
+    let dataCache;              // keep data around to restyle
     const legend = L.control({position: 'bottomright'});
-    legend.onAdd = function () {
-      const div = L.DomUtil.create('div', 'legend');
-      const grades = [0, 100, 500, 1000, 5000, 10000, 20000, 50000, 100000];
-      for (let i = 0; i < grades.length; i++) {
-        div.innerHTML +=
-          '<i style="background:' + color(grades[i] + 1) + '"></i> ' +
-          grades[i] + (grades[i + 1] ? '&ndash;' + grades[i + 1] + '<br>' : '+');
-      }
+
+    // --- Legend builder ---
+    legend.onAdd = function(){
+      const div = L.DomUtil.create('div','legend');
+      const items = currentMode === 'towers'
+        ? [ [">20",21], [">10",11], [">5",6], [">0",1], ["0",0] ]
+        : [ [">50 Mbps", 50001], [">30 Mbps",30001], [">15 Mbps",15001], [">8 Mbps",8001], [">4 Mbps",4001], ["≤4 Mbps",0] ];
+
+      div.innerHTML = `<strong>${currentMode==='towers'?'Tower count':'Avg download (kbps)'}</strong><br>`;
+      items.forEach(([label,val])=>{
+        const color = currentMode==='towers' ? colorTowers(val) : colorSpeed(val);
+        div.innerHTML += `<i style="background:${color}"></i>${label}<br>`;
+      });
       return div;
     };
-    legend.addTo(map);
 
-    function highlight(e) {
-      const layer = e.target;
-      layer.setStyle({ weight: 2, color: '#000', fillOpacity: 0.75 });
-      info.update(layer.feature.properties || null);
-      layer.bringToFront();
-    }
-    function reset(e) {
-      geojson.resetStyle(e.target);
-      info.update();
-    }
-    function onEachFeature(feature, layer) {
-      layer.on({ mouseover: highlight, mouseout: reset });
-      const p = feature.properties || {};
-      layer.bindPopup(
-        `<b>Tile:</b> ${p.tile || '(n/a)'}<br/>
-         <b>Download:</b> ${p.avg_d_kbps ?? 'n/a'} kbps<br/>
-         <b>Upload:</b> ${p.avg_u_kbps ?? 'n/a'} kbps<br/>
-         <b>Tests:</b> ${p.tests ?? 'n/a'}`
-      );
+    function styleFeature(feat){
+      const p = feat.properties;
+      const value = currentMode === 'towers' ? (p.towers_all ?? 0) : (p.avg_download_kbps ?? 0);
+      const fill = currentMode === 'towers' ? colorTowers(value) : colorSpeed(value);
+      return { color: "#333", weight: 0.3, fillOpacity: 0.75, fillColor: fill };
     }
 
-    fetch('ookla_bb_sample.geojson')
-      .then(r => r.json())
-      .then(data => {
-        window.geojson = L.geoJSON(data, { style, onEachFeature }).addTo(map);
-        try { map.fitBounds(geojson.getBounds(), { padding: [20, 20] }); } catch (e) {}
+    function popupHtml(p){
+      const d = (p.avg_download_kbps ?? 0).toFixed(0);
+      const u = (p.avg_upload_kbps ?? 0).toFixed(0);
+      return `
+        <b>Tile ID:</b> ${p.tile_id}<br/>
+        <b>Towers:</b> ${p.towers_all}<br/>
+        <b>Avg Download:</b> ${d} kbps<br/>
+        <b>Avg Upload:</b> ${u} kbps
+      `;
+    }
+
+    function renderLayer(geojson){
+      if(layer){ layer.remove(); }
+      layer = L.geoJSON(geojson, {
+        style: styleFeature,
+        onEachFeature: (f, l) => l.bindPopup(popupHtml(f.properties))
+      }).addTo(map);
+      legend.remove(); legend.addTo(map);
+    }
+
+    // --- Mode control (dropdown) ---
+    const ModeControl = L.Control.extend({
+      onAdd: function(){
+        const div = L.DomUtil.create('div','mode-control');
+        div.innerHTML = `
+          <label style="display:block;margin-bottom:4px;"><b>Color by</b></label>
+          <select id="modeSelect">
+            <option value="towers" selected>Towers</option>
+            <option value="speed">Avg Download</option>
+          </select>
+        `;
+        // Prevent map drag when interacting with control
+        L.DomEvent.disableClickPropagation(div);
+        return div;
+      }
+    });
+    map.addControl(new ModeControl({position:'topleft'}));
+
+    // React to selection change
+    document.addEventListener('change', (e)=>{
+      if(e.target && e.target.id === 'modeSelect'){
+        currentMode = e.target.value;
+        renderLayer(dataCache);
+      }
+    });
+
+    // --- Load your GeoJSON (with geometry) ---
+    fetch('towers_per_tile.geojson')
+      .then(r=>r.json())
+      .then(geojson=>{
+        dataCache = geojson;
+        renderLayer(geojson);
+        // zoom to data
+        const bounds = L.geoJSON(geojson).getBounds();
+        if(bounds.isValid()) map.fitBounds(bounds.pad(0.05));
       })
-      .catch(err => {
-        console.error('Failed to load ookla_bb_sample.geojson', err);
-        alert('Could not load ookla_bb_sample.geojson. Make sure the file is in the same folder as this HTML.');
-      });
+      .catch(err=>console.error('Failed to load GeoJSON:', err));
   </script>
 </body>
 </html>
