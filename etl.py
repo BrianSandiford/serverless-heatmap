@@ -60,3 +60,19 @@ def main():
 
     out1 = os.getenv("OUTPUT_GEOJSON_1", "towers_per_tile.geojson")
     out2 = os.getenv("OUTPUT_GEOJSON_2", "towers_per_tile_lte.geojson")
+   
+       towers_path = str(Path(args.towers_csv).resolve())
+    # Import points with lat/lon as geometry (EPSG:4326)
+    sh([
+        "docker","run","--rm",
+        "-v",f"{Path(towers_path).parent}:/data",
+        "--network","heatmapnet",
+        gdal_image,
+        "ogr2ogr","-f","PostgreSQL",
+        f"PG:host={host} port={port} dbname={db} user={user} password={pwd}",
+        f"/data/{Path(towers_path).name}",
+        "-nln",f"{towers_schema}.{towers_table}","-overwrite",
+        "-oo","HEADERS=YES","-oo","SEPARATOR=COMMA","-oo","AUTODETECT_TYPE=YES",
+        "-oo","X_POSSIBLE_NAMES=lon","-oo","Y_POSSIBLE_NAMES=lat",
+        "-nlt","POINT","-a_srs","EPSG:4326"
+    ])
