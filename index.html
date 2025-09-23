@@ -1,133 +1,106 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Barbados • Towers vs Speed</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <title>Heatmap — Towers & Speed</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
   <style>
-    #map { height: 100vh; }
-    .mode-control {
-      background: #fff; padding: 6px 8px; border-radius: 4px;
-      box-shadow: 0 1px 5px rgba(0,0,0,0.4); font: 14px/1.2 system-ui, sans-serif;
-    }
-    .legend {
-      background: #fff; padding: 8px; border-radius: 4px;
-      line-height: 1.2; box-shadow: 0 1px 5px rgba(0,0,0,0.4);
-    }
-    .legend i { width: 14px; height: 14px; float: left; margin-right: 8px; opacity: .9; }
+    html, body, #map { height: 100%; margin: 0; }
   </style>
 </head>
 <body>
   <div id="map"></div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
   <script>
-    // --- Map ---
+    // 1) Map init (center roughly on Barbados)
     const map = L.map('map').setView([13.15, -59.55], 11);
+
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap'
+      maxZoom: 18,
+      attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
-    // --- Color scales ---
-    function colorTowers(v){
-      return v > 20 ? '#08306b' :
-             v > 10 ? '#2171b5' :
-             v >  5 ? '#6baed6' :
-             v >  0 ? '#c6dbef' : '#f7fbff';
-    }
-    // speeds are in kbps; tweak bins as you like
-    function colorSpeed(v){
-      return v > 50000 ? '#00441b' :
-             v > 30000 ? '#1b7837' :
-             v > 15000 ? '#5aae61' :
-             v >  8000 ? '#a6dba0' :
-             v >  4000 ? '#d9f0d3' : '#f7fcf5';
-    }
-
-    let currentMode = 'towers'; // 'towers' or 'speed'
-    let layer;                  // the GeoJSON layer
-    let dataCache;              // keep data around to restyle
-    const legend = L.control({position: 'bottomright'});
-
-    // --- Legend builder ---
-    legend.onAdd = function(){
-      const div = L.DomUtil.create('div','legend');
-      const items = currentMode === 'towers'
-        ? [ [">20",21], [">10",11], [">5",6], [">0",1], ["0",0] ]
-        : [ [">50 Mbps", 50001], [">30 Mbps",30001], [">15 Mbps",15001], [">8 Mbps",8001], [">4 Mbps",4001], ["≤4 Mbps",0] ];
-
-      div.innerHTML = `<strong>${currentMode==='towers'?'Tower count':'Avg download (kbps)'}</strong><br>`;
-      items.forEach(([label,val])=>{
-        const color = currentMode==='towers' ? colorTowers(val) : colorSpeed(val);
-        div.innerHTML += `<i style="background:${color}"></i>${label}<br>`;
-      });
-      return div;
-    };
-
-    function styleFeature(feat){
-      const p = feat.properties;
-      const value = currentMode === 'towers' ? (p.towers_all ?? 0) : (p.avg_download_kbps ?? 0);
-      const fill = currentMode === 'towers' ? colorTowers(value) : colorSpeed(value);
-      return { color: "#333", weight: 0.3, fillOpacity: 0.75, fillColor: fill };
+    // 2) Helper styles
+    function styleByTowers(feature) {
+      const n = feature.properties?.towers_all ?? 0;
+      // simple choropleth: more towers → darker color
+      return {
+        color: '#555',
+        weight: 0.5,
+        fillOpacity: Math.min(0.1 + n * 0.08, 0.8),
+        fillColor: n > 10 ? '#08519c' :
+                   n > 5  ? '#3182bd' :
+                   n > 2  ? '#6baed6' :
+                   n > 0  ? '#9ecae1' : '#c6dbef'
+      };
     }
 
-    function popupHtml(p){
-      const d = (p.avg_download_kbps ?? 0).toFixed(0);
-      const u = (p.avg_upload_kbps ?? 0).toFixed(0);
-      return `
-        <b>Tile ID:</b> ${p.tile_id}<br/>
-        <b>Towers:</b> ${p.towers_all}<br/>
-        <b>Avg Download:</b> ${d} kbps<br/>
-        <b>Avg Upload:</b> ${u} kbps
-      `;
+    function styleByLTE(feature) {
+      const n = feature.properties?.towers_lte ?? 0;
+      return {
+        color: '#555',
+        weight: 0.5,
+        fillOpacity: Math.min(0.1 + n * 0.08, 0.8),
+        fillColor: n > 10 ? '#006d2c' :
+                   n > 5  ? '#2ca25f' :
+                   n > 2  ? '#66c2a4' :
+                   n > 0  ? '#99d8c9' : '#ccece6'
+      };
     }
 
-    function renderLayer(geojson){
-      if(layer){ layer.remove(); }
-      layer = L.geoJSON(geojson, {
-        style: styleFeature,
-        onEachFeature: (f, l) => l.bindPopup(popupHtml(f.properties))
-      }).addTo(map);
-      legend.remove(); legend.addTo(map);
+    function onEachFeature(feature, layer) {
+      const p = feature.properties || {};
+      const rows = Object.entries(p)
+        .map(([k, v]) => `<tr><td><b>${k}</b></td><td>${v}</td></tr>`)
+        .join('');
+      layer.bindPopup(`<table>${rows}</table>`);
     }
 
-    // --- Mode control (dropdown) ---
-    const ModeControl = L.Control.extend({
-      onAdd: function(){
-        const div = L.DomUtil.create('div','mode-control');
-        div.innerHTML = `
-          <label style="display:block;margin-bottom:4px;"><b>Color by</b></label>
-          <select id="modeSelect">
-            <option value="towers" selected>Towers</option>
-            <option value="speed">Avg Download</option>
-          </select>
-        `;
-        // Prevent map drag when interacting with control
-        L.DomEvent.disableClickPropagation(div);
-        return div;
-      }
-    });
-    map.addControl(new ModeControl({position:'topleft'}));
+    // 3) Load your ETL outputs (adjust paths if you moved them)
+    const towersAllUrl = 'towers_per_tile.geojson';
+    const towersLTEUrl = 'towers_per_tile_lte.geojson';
 
-    // React to selection change
-    document.addEventListener('change', (e)=>{
-      if(e.target && e.target.id === 'modeSelect'){
-        currentMode = e.target.value;
-        renderLayer(dataCache);
-      }
-    });
+    const baseLayers = {};
+    const overlays = {};
 
-    // --- Load your GeoJSON (with geometry) ---
-    fetch('towers_per_tile.geojson')
-      .then(r=>r.json())
-      .then(geojson=>{
-        dataCache = geojson;
-        renderLayer(geojson);
-        // zoom to data
-        const bounds = L.geoJSON(geojson).getBounds();
-        if(bounds.isValid()) map.fitBounds(bounds.pad(0.05));
+    // Towers (all)
+    fetch(towersAllUrl)
+      .then(r => r.json())
+      .then(geo => {
+        const layer = L.geoJSON(geo, {
+          style: styleByTowers,
+          onEachFeature
+        }).addTo(map);
+        overlays['Towers (All)'] = layer;
       })
-      .catch(err=>console.error('Failed to load GeoJSON:', err));
+      .catch(err => console.error('Failed to load towers_per_tile.geojson', err));
+
+    // Towers (LTE + nearest LTE distance)
+    fetch(towersLTEUrl)
+      .then(r => r.json())
+      .then(geo => {
+        const layer = L.geoJSON(geo, {
+          style: styleByLTE,
+          onEachFeature
+        });
+        overlays['Towers (LTE)'] = layer;
+      })
+      .catch(err => console.error('Failed to load towers_per_tile_lte.geojson', err));
+
+    // 4) Add a layer control after both fetches resolve (simple delay works)
+    setTimeout(() => {
+      L.control.layers(baseLayers, overlays, { collapsed: false }).addTo(map);
+    }, 800);
   </script>
 </body>
 </html>
