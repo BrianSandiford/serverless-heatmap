@@ -45,7 +45,11 @@
       height: 12px;
       border: 1px solid #333;
       display: inline-block;
+
     }
+
+    .legend i { width:14px; height:14px; float:left; margin-right:6px; opacity:.8; }
+    
   </style>
 </head>
 <body>
@@ -57,6 +61,9 @@
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
     crossorigin=""
   ></script>
+
+  <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+
 
   <script>
   // 1) Map + basemap
@@ -156,7 +163,48 @@
       layerControl.addOverlay(lteLayer, 'LTE Towers');
     })
     .catch(err => console.error('Failed to load LTE layer:', err));
+  
 
+  let heatLayer;
+
+  // Helper: Convert GeoJSON points to heat array [[lat, lon, weight], ...]
+  function geojsonToHeatArray(geojson, weightBy) {
+    const pts = [];
+    for (const f of geojson.features || []) {
+      if (!f.geometry || f.geometry.type !== 'Point') continue;
+      const [lon, lat] = f.geometry.coordinates;  // GeoJSON is [lon, lat]
+      const w = weightBy ? (Number(f.properties?.[weightBy]) || 1) : 1;
+      // weight should be ~0..1 range; normalize if you like
+      pts.push([lat, lon, w]);
+    }
+    return pts;
+  }
+
+  // Load ALL towers points (use LTE file if you prefer)
+  fetch('towers_points.geojson?v=1')
+    .then(r => r.json())
+    .then(geo => {
+      // Choose a weight strategy:
+      //  - uniform weight: (no weightBy)
+      //  - by radio (LTE=1.0, others=0.5), or by speed (if available)
+      // For now, uniform:
+      const heatData = geojsonToHeatArray(geo /*, weightBy = null */);
+
+      heatLayer = L.heatLayer(heatData, {
+        radius: 18,       // larger = smoother blobs
+        blur: 15,         // softness
+        maxZoom: 17,      // fades as you zoom out
+        max: 1.0          // max intensity (if you normalize weights)
+      });
+
+      // Register with the layers control
+      layerControl.addOverlay(heatLayer, 'Heatmap (Towers)');
+
+      // Optional: show by default
+      // heatLayer.addTo(map);
+    })
+    .catch(err => console.error('Failed to load towers_points.geojson', err));
+    
   // 4) Tiny legend (bottom-right)
   const legend = L.control({ position: 'bottomright' });
   legend.onAdd = function () {
@@ -175,6 +223,22 @@
     return div;
   };
   legend.addTo(map);
+
+  const heatLegend = L.control({ position: 'bottomright' });
+    heatLegend.onAdd = function () {
+      const div = L.DomUtil.create('div','info legend');
+      const grades = ['low', 'medium', 'high'];
+      const colors = ['blue', 'lime', 'red'];  // exact gradient from leaflet.heat
+      div.innerHTML = '<b>Heatmap (density)</b><br>';
+  for (let i = 0; i < grades.length; i++) {
+    div.innerHTML +=
+      '<i style="background:' + colors[i] + '"></i> ' +
+      grades[i] + '<br>';
+  }
+  return div;
+};
+heatLegend.addTo(map);
+
   </script>
 </body>
 </html>
