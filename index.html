@@ -45,11 +45,24 @@
       height: 12px;
       border: 1px solid #333;
       display: inline-block;
-
     }
-
     .legend i { width:14px; height:14px; float:left; margin-right:6px; opacity:.8; }
-    
+
+    /* Credits footer: clear, visible, clickable */
+    .credits-footer {
+      position: fixed;
+      left: 10px;
+      bottom: 8px;       /* sits just above default Leaflet attribution */
+      z-index: 600;
+      background: rgba(255,255,255,0.92);
+      border-radius: 4px;
+      box-shadow: 0 0 15px rgba(0,0,0,0.2);
+      padding: 6px 10px;
+      font: 12px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      color: #222;
+    }
+    .credits-footer a { color: #0061c2; text-decoration: none; }
+    .credits-footer a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -64,14 +77,22 @@
 
   <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
 
-
   <script>
-  // 1) Map + basemap
-  const map = L.map('map').setView([13.16, -59.55], 11);
+  // 1) Map + basemap (keep attribution control enabled)
+  const map = L.map('map', { attributionControl: true }).setView([13.16, -59.55], 11);
   const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
-    attribution: '&copy; OpenStreetMap contributors'
+    // OSM safe-harbour attribution: must be clickable and say “OpenStreetMap contributors”
+    attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
   }).addTo(map);
+
+  // Add specific attributions for other datasets you display
+  map.attributionControl.addAttribution(
+    'Cell-tower data: <a href="https://opencellid.org/odbl" target="_blank" rel="noopener">OpenCelliD</a> (ODbL)'
+  );
+  map.attributionControl.addAttribution(
+    'Speed data: <a href="https://registry.opendata.aws/speedtest-global-performance/" target="_blank" rel="noopener">Ookla Open Data</a>'
+  );
 
   // Helper color scales (adjust breaks/colors to taste)
   function colorByCount(n) {
@@ -94,7 +115,7 @@
                     '#a1d99b';
   }
 
-  // Layer control scaffold (you had this — perfect)
+  // Layer control scaffold
   const baseMaps = { OpenStreetMap: osm };
   const overlays = {};
   const layerControl = L.control.layers(baseMaps, overlays, { collapsed:false }).addTo(map);
@@ -106,8 +127,8 @@
     .then(data => {
       allTowersLayer = L.geoJSON(data, {
         style: f => ({
-          color: '#2b4a7d',                                // darker blue outline
-          weight: 0.9,                                     // thin stroke
+          color: '#2b4a7d',
+          weight: 0.9,
           fillColor: colorByCount(f.properties?.towers_all ?? 0),
           fillOpacity: 0.58
         }),
@@ -122,14 +143,13 @@
         }
       }).addTo(map);
 
-      // Register with the existing control
       overlays['All Towers'] = allTowersLayer;
       layerControl.addOverlay(allTowersLayer, 'All Towers');
     });
 
   // 3) LTE Towers (green) — shown by default
   let lteLayer;
-  fetch('towers_per_tile_lte.geojson?v=2')  // cache-bust
+  fetch('towers_per_tile_lte.geojson?v=2')
     .then(r => r.json())
     .then(data => {
       if (!data.features || !data.features.length) {
@@ -138,8 +158,8 @@
       }
       lteLayer = L.geoJSON(data, {
         style: f => ({
-          color: '#1e6129',                                // dark green outline
-          weight: 1.0,                                     // slightly stronger stroke
+          color: '#1e6129',
+          weight: 1.0,
           fillColor: colorByLTE(f.properties?.towers_lte ?? 0),
           fillOpacity: 0.58
         }),
@@ -155,26 +175,21 @@
         }
       });
 
-      // Make LTE visible by default:
       lteLayer.addTo(map);
-
-      // Register with the control
       overlays['LTE Towers'] = lteLayer;
       layerControl.addOverlay(lteLayer, 'LTE Towers');
     })
     .catch(err => console.error('Failed to load LTE layer:', err));
-  
 
   let heatLayer;
 
-  // Helper: Convert GeoJSON points to heat array [[lat, lon, weight], ...]
+  // Convert GeoJSON points to heat array [[lat, lon, weight], ...]
   function geojsonToHeatArray(geojson, weightBy) {
     const pts = [];
     for (const f of geojson.features || []) {
       if (!f.geometry || f.geometry.type !== 'Point') continue;
-      const [lon, lat] = f.geometry.coordinates;  // GeoJSON is [lon, lat]
+      const [lon, lat] = f.geometry.coordinates; // GeoJSON is [lon, lat]
       const w = weightBy ? (Number(f.properties?.[weightBy]) || 1) : 1;
-      // weight should be ~0..1 range; normalize if you like
       pts.push([lat, lon, w]);
     }
     return pts;
@@ -184,28 +199,19 @@
   fetch('towers_points.geojson?v=1')
     .then(r => r.json())
     .then(geo => {
-      // Choose a weight strategy:
-      //  - uniform weight: (no weightBy)
-      //  - by radio (LTE=1.0, others=0.5), or by speed (if available)
-      // For now, uniform:
       const heatData = geojsonToHeatArray(geo /*, weightBy = null */);
-
       heatLayer = L.heatLayer(heatData, {
-        radius: 18,       // larger = smoother blobs
-        blur: 15,         // softness
-        maxZoom: 17,      // fades as you zoom out
-        max: 1.0          // max intensity (if you normalize weights)
+        radius: 18,
+        blur: 15,
+        maxZoom: 17,
+        max: 1.0
       });
-
-      // Register with the layers control
       layerControl.addOverlay(heatLayer, 'Heatmap (Towers)');
-
-      // Optional: show by default
-      // heatLayer.addTo(map);
+      // heatLayer.addTo(map); // uncomment to show by default
     })
     .catch(err => console.error('Failed to load towers_points.geojson', err));
-    
-  // 4) Tiny legend (bottom-right)
+
+  // 4) Tiny legends (bottom-right)
   const legend = L.control({ position: 'bottomright' });
   legend.onAdd = function () {
     const div = L.DomUtil.create('div', 'legend');
@@ -225,20 +231,26 @@
   legend.addTo(map);
 
   const heatLegend = L.control({ position: 'bottomright' });
-    heatLegend.onAdd = function () {
-      const div = L.DomUtil.create('div','info legend');
-      const grades = ['low', 'medium', 'high'];
-      const colors = ['blue', 'lime', 'red'];  // exact gradient from leaflet.heat
-      div.innerHTML = '<b>Heatmap (density)</b><br>';
-  for (let i = 0; i < grades.length; i++) {
-    div.innerHTML +=
-      '<i style="background:' + colors[i] + '"></i> ' +
-      grades[i] + '<br>';
-  }
-  return div;
-};
-heatLegend.addTo(map);
-
+  heatLegend.onAdd = function () {
+    const div = L.DomUtil.create('div','info legend');
+    const grades = ['low', 'medium', 'high'];
+    const colors = ['blue', 'lime', 'red'];  // approximate leaflet.heat gradient
+    div.innerHTML = '<b>Heatmap (density)</b><br>';
+    for (let i = 0; i < grades.length; i++) {
+      div.innerHTML +=
+        '<i style="background:' + colors[i] + '"></i> ' +
+        grades[i] + '<br>';
+    }
+    return div;
+  };
+  heatLegend.addTo(map);
   </script>
+
+  <!-- Visible, clickable credits (extra-safe attribution) -->
+  <div class="credits-footer">
+    Base map: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · OSM data under <a href="https://opendatacommons.org/licenses/odbl/" target="_blank" rel="noopener">ODbL</a>.<br>
+    Cell-tower data: <a href="https://opencellid.org/odbl" target="_blank" rel="noopener">OpenCelliD</a> (ODbL).&nbsp;
+    Speed data: <a href="https://registry.opendata.aws/speedtest-global-performance/" target="_blank" rel="noopener">Ookla Open Data</a>.
+  </div>
 </body>
 </html>
