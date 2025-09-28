@@ -53,21 +53,19 @@ def main():
 
     towers_path = str(Path(args.towers_csv).resolve())
     # 1) Import towers CSV -> PostGIS (detect lat/lon columns; EPSG:4326 point)
+    # before: sh(["docker","run","--rm", ... "ogr2ogr", ...])
+    # after:
     sh([
-        "docker","run","--rm",
-        "-v",f"{Path(towers_path).parent}:/data",
-        "--network","heatmapnet",
-        gdal_image,
-        "ogr2ogr","-f","PostgreSQL",
+        "ogr2ogr", "-f", "PostgreSQL",
         f"PG:host={host} port={port} dbname={db} user={user} password={pwd}",
         f"/data/{Path(towers_path).name}",
-        "-nln",f"{towers_schema}.{towers_table}","-overwrite",
-        "-oo","HEADERS=YES","-oo","SEPARATOR=COMMA","-oo","AUTODETECT_TYPE=YES",
-        "-oo","X_POSSIBLE_NAMES=lon","-oo","Y_POSSIBLE_NAMES=lat",
-        "-nlt","POINT","-a_srs","EPSG:4326",
-        # 👇 force geometry column name
-        "-lco","GEOMETRY_NAME=geom"
+        "-nln", f"{towers_schema}.{towers_table}", "-overwrite",
+        "-oo", "HEADERS=YES", "-oo", "SEPARATOR=COMMA", "-oo", "AUTODETECT_TYPE=YES",
+        "-oo", "X_POSSIBLE_NAMES=lon", "-oo", "Y_POSSIBLE_NAMES=lat",
+        "-nlt", "POINT", "-a_srs", "EPSG:4326",
+        "-lco", "GEOMETRY_NAME=geom"
     ])
+
     
     sql_fix_towers = f"""
 DO $$

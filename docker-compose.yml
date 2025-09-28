@@ -1,47 +1,46 @@
-version: "3.9"
-
 services:
   db:
-    image: postgis/postgis:15-3.3
+    image: postgis/postgis:16-3.4
     container_name: postgis_container
     environment:
+      POSTGRES_DB: geodb
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: StrongPass123
-      POSTGRES_DB: geodb
     volumes:
-      - db_data:/var/lib/postgresql/data
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
-    ports:
-      - "5432:5432"
-    networks:
-      - heatmapnet
+      - serverless_heatmap_db_data:/var/lib/postgresql/data
+    networks: [heatmapnet]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d geodb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   etl:
-    build: ./etl
-    container_name: etl_container
+    build: .
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     environment:
       POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
       POSTGRES_DB: geodb
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: StrongPass123
-    networks:
-      - heatmapnet
+    volumes:
+      - ./data:/data            # where your CSV/GeoJSON live
+      - ./:/app                 # optional: hot-reload the script
+    networks: [heatmapnet]
 
   web:
     image: nginx:alpine
-    container_name: web_container
     volumes:
       - ./web:/usr/share/nginx/html:ro
     ports:
       - "8000:80"
-    networks:
-      - heatmapnet
-
-volumes:
-  db_data:
+    networks: [heatmapnet]
 
 networks:
   heatmapnet:
-    driver: bridge
+
+volumes:
+  serverless_heatmap_db_data:
