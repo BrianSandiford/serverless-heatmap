@@ -16,19 +16,25 @@ services:
       retries: 10
 
   etl:
-    build: .
+    # ⬇⬇ Build the image from the repo root, using the Dockerfile in etl/
+    build:
+      context: .
+      dockerfile: etl/Dockerfile
     depends_on:
       db:
         condition: service_healthy
     environment:
-      POSTGRES_HOST: db
+      POSTGRES_HOST: db              # service name is fine
       POSTGRES_PORT: "5432"
       POSTGRES_DB: geodb
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: StrongPass123
     volumes:
-      - ./data:/data            # where your CSV/GeoJSON live
-      - ./:/app                 # optional: hot-reload the script
+      - ./data:/data                 # where your CSV/GeoJSON live
+      - ./:/app                      # (optional) hot-reload code inside container
+    # If your Dockerfile already has: CMD ["python","etl/etl.py"]
+    # you don't need this command line. If you want to pass args, add:
+    command: ["python","etl/etl.py","--towers-csv","/data/opencellid_barbados_towers.csv"]
     networks: [heatmapnet]
 
   web:
