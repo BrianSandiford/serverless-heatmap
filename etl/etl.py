@@ -15,16 +15,19 @@ def sh(cmd: list[str]):
     print("→", " ".join(cmd))
     subprocess.run(cmd, check=True)
 
-def run_psql_sql(container: str, db: str, user: str, password: str, sql: str):
+def run_psql_sql(host, port, db, user, pwd, sql):
+    import subprocess
     cmd = [
-        "docker","exec","-e",f"PGPASSWORD={password}","-i",container,
-        "psql","-U",user,"-d",db,"-v","ON_ERROR_STOP=1"
+        "psql",
+        f"host={host}",
+        f"port={port}",
+        f"dbname={db}",
+        f"user={user}",
+        f"password={pwd}",
+        "-v", "ON_ERROR_STOP=1",
+        "-c", sql,
     ]
-    print("→ Executing SQL block...")
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, text=True)
-    proc.communicate(sql)
-    if proc.returncode != 0:
-        raise RuntimeError("psql returned non-zero exit status")
+    subprocess.run(cmd, check=True)
 
 def main():
     load_dotenv(find_dotenv(usecwd=True) or ".env")
@@ -55,15 +58,19 @@ def main():
     # 1) Import towers CSV -> PostGIS (detect lat/lon columns; EPSG:4326 point)
     # before: sh(["docker","run","--rm", ... "ogr2ogr", ...])
     # after:
+    
+
     sh([
         "ogr2ogr", "-f", "PostgreSQL",
         f"PG:host={host} port={port} dbname={db} user={user} password={pwd}",
         f"/data/{Path(towers_path).name}",
-        "-nln", f"{towers_schema}.{towers_table}", "-overwrite",
+        "-nln","bb_towers","-lco","SCHEMA=cell_towers","-overwrite",
+        #"-nln", f"{towers_schema}.{towers_table}", "-overwrite",
         "-oo", "HEADERS=YES", "-oo", "SEPARATOR=COMMA", "-oo", "AUTODETECT_TYPE=YES",
         "-oo", "X_POSSIBLE_NAMES=lon", "-oo", "Y_POSSIBLE_NAMES=lat",
         "-nlt", "POINT", "-a_srs", "EPSG:4326",
-        "-lco", "GEOMETRY_NAME=geom"
+        "-lco","OVERWRITE=YES",
+        "-lco","GEOMETRY_NAME=geom"
     ])
 
     
@@ -107,7 +114,9 @@ CREATE INDEX IF NOT EXISTS bb_towers_geom_gix
   ON {towers_schema}.{towers_table} USING GIST (geom);
 """
 
-    run_psql_sql(container, db, user, pwd, sql_fix_towers)
+    
+    run_psql_sql(host, port, db, user, pwd, "CREATE EXTENSION IF NOT EXISTS postgis;")
+    run_psql_sql(host, port, db, user, pwd, f"CREATE SCHEMA IF NOT EXISTS {towers_schema} AUTHORIZATION {user};")
 
 
     # 2) Ensure Ookla geometry + create BB subset

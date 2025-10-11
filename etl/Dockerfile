@@ -1,29 +1,24 @@
 # Start from GDAL image (with Python installed)
 FROM ghcr.io/osgeo/gdal:ubuntu-full-latest
 
-# Install Python + venv tools
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-venv \
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Python + Postgres client
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv postgresql-client ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Copy requirements first (to leverage Docker cache)
+# Requirements first (cache-friendly)
 COPY requirements.txt .
-
-# Create a virtual environment and install dependencies
 RUN python3 -m venv /opt/venv \
  && . /opt/venv/bin/activate \
  && pip install --no-cache-dir -r requirements.txt
 
-# Add venv to PATH (so `python` and `pip` default to venv)
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy the rest of the app
+# App code
 COPY . .
 
-# Default command
 CMD ["python", "etl/etl.py"]
