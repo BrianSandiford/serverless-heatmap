@@ -122,7 +122,7 @@
 
   // 2) All Towers (blue)
   let allTowersLayer;
-  fetch('towers_per_tile.geojson?v=2')  // cache-bust
+  fetch('data/towers_per_tile.geojson?v=2')  // cache-bust
     .then(r => r.json())
     .then(data => {
       allTowersLayer = L.geoJSON(data, {
@@ -149,7 +149,7 @@
 
   // 3) LTE Towers (green) — shown by default
   let lteLayer;
-  fetch('towers_per_tile_lte.geojson?v=2')
+  fetch('data/towers_per_tile_lte.geojson?v=2')
     .then(r => r.json())
     .then(data => {
       if (!data.features || !data.features.length) {

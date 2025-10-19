@@ -80,6 +80,41 @@ def run_psql_to_file(*, host: str, port=5432, db: str, user: str, pwd: str,
     Path(out_path).write_text(result.stdout.strip() + "\n", encoding="utf-8")
     print("→ wrote", out_path)
 
+def import_ookla_parquet_if_missing(*, host, port, db, user, pwd,
+                                    parquet_path: str, schema: str, table: str):
+    """
+    If parquet_path exists and the target table does not, import Parquet -> Postgres with ogr2ogr.
+    We don't force geometry here; the script later builds geom from the 'tile' WKT column.
+    """
+    from pathlib import Path
+    if not parquet_path:
+        return
+    if not Path(parquet_path).exists():
+        print(f"ℹ️ OOKLA_PARQUET set but file not found: {parquet_path}")
+        return
+
+    # Check whether table already exists
+    if pg_table_exists(host=host, port=port, db=db, user=user, pwd=pwd,
+                       qualified_table=f"{schema}.{table}"):
+        print(f"ℹ️ {schema}.{table} already exists; skipping Parquet import.")
+        return
+
+    # Ensure schema
+    run_psql_sql(host=host, port=port, db=db, user=user, pwd=pwd,
+                 sql=f"CREATE SCHEMA IF NOT EXISTS {schema};")
+
+    dsn = f"PG:host={host} port={port} dbname={db} user={user} password={pwd}"
+    cmd = [
+        "ogr2ogr", "-f", "PostgreSQL", dsn,
+        parquet_path,
+        "-nln", table,
+        "-lco", f"SCHEMA={schema}",
+        "-oo", "AUTODETECT_TYPE=YES"
+        # If your Parquet has WKT in 'tile' and you want OGR to detect geometry now:
+        # , "-oo", "GEOM_POSSIBLE_NAMES=tile"
+    ]
+    sh_show(cmd)
+
 
 def main():
     # -------- Env & args --------
@@ -105,6 +140,18 @@ def main():
 
     out1 = os.getenv("OUTPUT_GEOJSON_1", "towers_per_tile.geojson")
     out2 = os.getenv("OUTPUT_GEOJSON_2", "towers_per_tile_lte.geojson")
+
+    # Read an optional parquet path from env (mapped under /data in the container)
+    ookla_parquet = os.getenv("OOKLA_PARQUET", "/data/mobile_q1_2024_part0.parquet")
+
+    # Try to import it if present and the PG table is missing
+    import_ookla_parquet_if_missing(
+        host=host, port=port, db=db, user=user, pwd=pwd,
+        parquet_path=ookla_parquet,
+        schema=ookla_schema,
+        table=ookla_table
+    )
+
 
     # IMPORTANT: the CSV path must be valid inside THIS container
     towers_path = str(Path(args.towers_csv).resolve())
