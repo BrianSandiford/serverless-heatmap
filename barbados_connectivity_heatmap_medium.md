@@ -1,8 +1,4 @@
----
-title: "Building a Serverless Connectivity Heatmap for Barbados: My Journey (and Lessons Learned)"
-subtitle: "From Python’s http.server to a full Docker-PostGIS-Nginx stack — how debugging shaped a data-driven map of 3G, 4G, and 5G coverage."
-tags: ["Docker", "PostGIS", "Python", "Data Engineering", "Leaflet", "Open Data", "Barbados", "5G", "ETL"]
----
+
 
 # Building a Serverless Connectivity Heatmap for Barbados: My Journey (and Lessons Learned)
 
