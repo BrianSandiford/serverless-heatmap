@@ -115,6 +115,16 @@
                     '#a1d99b';
   }
 
+  function colorBy5G(n) {
+    // purple/indigo scale
+    return n > 25 ? '#3f007d' :
+           n > 18 ? '#54278f' :
+           n > 12 ? '#6a51a3' :
+           n >  6 ? '#807dba' :
+           n >  2 ? '#9e9ac8' :
+                    '#bcbddc';
+  }
+
   // Layer control scaffold
   const baseMaps = { OpenStreetMap: osm };
   const overlays = {};
@@ -175,6 +185,41 @@
         }
       });
 
+      // 5) 5G Towers (indigo) — toggle in control
+  let layer5g;
+  fetch('data/towers_per_tile_5g.geojson?v=1')
+    .then(r => r.json())
+    .then(data => {
+      if (!data.features || !data.features.length) {
+        console.warn('5G GeoJSON has no features');
+        return;
+      }
+      layer5g = L.geoJSON(data, {
+        style: f => ({
+          color: '#1a237e',
+          weight: 1.0,
+          fillColor: colorBy5G(f.properties?.towers_5g ?? 0),
+          fillOpacity: 0.50
+        }),
+        onEachFeature: (f, layer) => {
+          const p = f.properties||{};
+          layer.bindPopup(
+            `<b>Tile:</b> ${p.tile_id ?? '—'}<br>
+             <b>5G Towers:</b> ${p.towers_5g ?? 0}<br>
+             <b>Down (kbps):</b> ${p.avg_download_kbps ?? '—'}<br>
+             <b>Up (kbps):</b> ${p.avg_upload_kbps ?? '—'}<br>
+             <b>Nearest 5G (m):</b> ${p.meters_to_nearest_5g ?? '—'}`
+          );
+        }
+      });
+
+      overlays['5G Towers'] = layer5g;
+      layerControl.addOverlay(layer5g, '5G Towers');
+      // layer5g.addTo(map); // uncomment if you want 5G visible by default
+    })
+    .catch(err => console.error('Failed to load 5G layer:', err));
+
+
       lteLayer.addTo(map);
       overlays['LTE Towers'] = lteLayer;
       layerControl.addOverlay(lteLayer, 'LTE Towers');
@@ -225,6 +270,11 @@
         <span class="swatch" style="background:#00441b"></span>
         <span>LTE Towers (darker = more)</span>
       </div>
+      <div class="row">
+        <span class="swatch" style="background:#3f007d"></span>
+        <span>5G Towers (darker = more)</span>
+      </div>
+
     `;
     return div;
   };

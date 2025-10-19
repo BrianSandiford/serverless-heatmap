@@ -140,6 +140,7 @@ def main():
 
     out1 = os.getenv("OUTPUT_GEOJSON_1", "towers_per_tile.geojson")
     out2 = os.getenv("OUTPUT_GEOJSON_2", "towers_per_tile_lte.geojson")
+    out3 = os.getenv("OUTPUT_GEOJSON_3", "towers_per_tile_5g.geojson") 
 
     # Read an optional parquet path from env (mapped under /data in the container)
     ookla_parquet = os.getenv("OOKLA_PARQUET", "/data/mobile_q1_2024_part0.parquet")
@@ -210,7 +211,8 @@ CREATE TABLE {towers_schema}.{towers_table} (
         dest_table=f"{towers_schema}.{towers_table}",
         copy_cols=copy_cols
     )
-
+    
+    
     # -------- Ensure towers geometry column + index --------
     sql_fix_towers = f"""
 DO $$
@@ -272,14 +274,33 @@ CREATE INDEX IF NOT EXISTS bb_towers_geom_gix
         """
         run_psql_sql(host=host, port=port, db=db, user=user, pwd=pwd, sql=sql_geom)
 
-        # Proceed only if the BB subset exists
+        # --- after your towers CSV \copy and after building geom on towers ---
+        sql_normalize_radio = f"""
+        ALTER TABLE {towers_schema}.{towers_table}
+          ADD COLUMN IF NOT EXISTS radio_norm text;
+
+        UPDATE {towers_schema}.{towers_table}
+        SET radio_norm = CASE
+          WHEN upper(coalesce(radio,'')) ~ '(?:^|[^A-Z])NR(?:$|[^A-Z])|^5G$|5G_NR|NR5G|NSA5G' THEN '5G'
+          WHEN upper(coalesce(radio,'')) LIKE '%LTE%' THEN 'LTE'
+          WHEN upper(coalesce(radio,'')) IN ('UMTS','WCDMA','HSPA','HSPA+','3G') THEN '3G'
+          WHEN upper(coalesce(radio,'')) IN ('GSM','EDGE','2G') THEN '2G'
+          ELSE 'OTHER'
+        END
+        WHERE radio_norm IS NULL;
+        """
+        run_psql_sql(host=host, port=port, db=db, user=user, pwd=pwd, sql=sql_normalize_radio)
+
+
+                # Proceed only if the BB subset exists
         if pg_table_exists(host=host, port=port, db=db, user=user, pwd=pwd,
                           qualified_table=f"{ookla_schema}.{ookla_table_bb}"):
 
-            # ----- Analysis tables -----
+            # ----- Analysis tables (LTE + 5G) -----
             run_psql_sql(host=host, port=port, db=db, user=user, pwd=pwd, sql=f"""
             CREATE SCHEMA IF NOT EXISTS {analysis_schema};
 
+            -- All towers per tile (any tech)
             DROP TABLE IF EXISTS {analysis_schema}.towers_per_tile;
             CREATE TABLE {analysis_schema}.towers_per_tile AS
             SELECT
@@ -295,11 +316,12 @@ CREATE INDEX IF NOT EXISTS bb_towers_geom_gix
             CREATE INDEX IF NOT EXISTS towers_per_tile_tile_id_idx
               ON {analysis_schema}.towers_per_tile (tile_id);
 
+            -- LTE towers per tile (uses normalized radio)
             DROP TABLE IF EXISTS {analysis_schema}.towers_per_tile_lte;
             CREATE TABLE {analysis_schema}.towers_per_tile_lte AS
             SELECT
               o.ogc_fid AS tile_id,
-              SUM(CASE WHEN t.radio='LTE' THEN 1 ELSE 0 END) AS towers_lte,
+              SUM(CASE WHEN t.radio_norm='LTE' THEN 1 ELSE 0 END) AS towers_lte,
               AVG(o.avg_d_kbps)::numeric(12,2) AS avg_download_kbps,
               AVG(o.avg_u_kbps)::numeric(12,2) AS avg_upload_kbps
             FROM {ookla_schema}.{ookla_table_bb} o
@@ -310,6 +332,23 @@ CREATE INDEX IF NOT EXISTS bb_towers_geom_gix
             CREATE INDEX IF NOT EXISTS towers_per_tile_lte_tile_id_idx
               ON {analysis_schema}.towers_per_tile_lte (tile_id);
 
+            -- 5G towers per tile
+            DROP TABLE IF EXISTS {analysis_schema}.towers_per_tile_5g;
+            CREATE TABLE {analysis_schema}.towers_per_tile_5g AS
+            SELECT
+              o.ogc_fid AS tile_id,
+              SUM(CASE WHEN t.radio_norm='5G' THEN 1 ELSE 0 END) AS towers_5g,
+              AVG(o.avg_d_kbps)::numeric(12,2) AS avg_download_kbps,
+              AVG(o.avg_u_kbps)::numeric(12,2) AS avg_upload_kbps
+            FROM {ookla_schema}.{ookla_table_bb} o
+            LEFT JOIN {towers_schema}.{towers_table} t
+              ON ST_Intersects(o.geom, t.geom)
+            GROUP BY o.ogc_fid;
+
+            CREATE INDEX IF NOT EXISTS towers_per_tile_5g_tile_id_idx
+              ON {analysis_schema}.towers_per_tile_5g (tile_id);
+
+            -- Centroids of Ookla tiles (if not already created elsewhere)
             DROP TABLE IF EXISTS {analysis_schema}.ookla_centroids;
             CREATE TABLE {analysis_schema}.ookla_centroids AS
             SELECT o.ogc_fid AS tile_id, ST_Centroid(o.geom) AS geom
@@ -318,18 +357,33 @@ CREATE INDEX IF NOT EXISTS bb_towers_geom_gix
             CREATE INDEX IF NOT EXISTS ookla_centroids_gix
               ON {analysis_schema}.ookla_centroids USING GIST (geom);
 
+            -- Nearest LTE distance (use radio_norm)
             DROP TABLE IF EXISTS {analysis_schema}.nearest_lte_distance;
             CREATE TABLE {analysis_schema}.nearest_lte_distance AS
             SELECT
               c.tile_id,
               MIN(ST_DistanceSphere(c.geom, t.geom)) AS meters_to_nearest_lte
             FROM {analysis_schema}.ookla_centroids c
-            JOIN {towers_schema}.{towers_table} t ON t.radio='LTE'
+            JOIN {towers_schema}.{towers_table} t ON t.radio_norm='LTE'
             GROUP BY c.tile_id;
 
             CREATE INDEX IF NOT EXISTS nearest_lte_tile_idx
               ON {analysis_schema}.nearest_lte_distance (tile_id);
 
+            -- Nearest 5G distance
+            DROP TABLE IF EXISTS {analysis_schema}.nearest_5g_distance;
+            CREATE TABLE {analysis_schema}.nearest_5g_distance AS
+            SELECT
+              c.tile_id,
+              MIN(ST_DistanceSphere(c.geom, t.geom)) AS meters_to_nearest_5g
+            FROM {analysis_schema}.ookla_centroids c
+            JOIN {towers_schema}.{towers_table} t ON t.radio_norm='5G'
+            GROUP BY c.tile_id;
+
+            CREATE INDEX IF NOT EXISTS nearest_5g_tile_idx
+              ON {analysis_schema}.nearest_5g_distance (tile_id);
+
+            -- LTE summary
             DROP TABLE IF EXISTS {analysis_schema}.tile_lte_summary;
             CREATE TABLE {analysis_schema}.tile_lte_summary AS
             SELECT
@@ -340,7 +394,20 @@ CREATE INDEX IF NOT EXISTS bb_towers_geom_gix
               d.meters_to_nearest_lte
             FROM {analysis_schema}.towers_per_tile_lte l
             LEFT JOIN {analysis_schema}.nearest_lte_distance d USING (tile_id);
+
+            -- 5G summary
+            DROP TABLE IF EXISTS {analysis_schema}.tile_5g_summary;
+            CREATE TABLE {analysis_schema}.tile_5g_summary AS
+            SELECT
+              g.tile_id,
+              g.towers_5g,
+              g.avg_download_kbps,
+              g.avg_upload_kbps,
+              d.meters_to_nearest_5g
+            FROM {analysis_schema}.towers_per_tile_5g g
+            LEFT JOIN {analysis_schema}.nearest_5g_distance d USING (tile_id);
             """)
+
 
             # ----- Exports -----
             run_psql_to_file(
@@ -387,9 +454,40 @@ CREATE INDEX IF NOT EXISTS bb_towers_geom_gix
                 out_path=str(Path(out2))
             )
 
+           # ----- 5G Export -----
+            run_psql_to_file(
+                host=host, port=port, db=db, user=user, pwd=pwd,
+                sql=f"""
+                WITH data AS (
+                  SELECT o.geom,
+                        s.tile_id,
+                        s.towers_5g,
+                        s.avg_download_kbps,
+                        s.avg_upload_kbps,
+                        d.meters_to_nearest_5g
+                  FROM {ookla_schema}.{ookla_table_bb} o
+                  JOIN {analysis_schema}.towers_per_tile_5g s ON s.tile_id=o.ogc_fid
+                  LEFT JOIN {analysis_schema}.nearest_5g_distance d ON d.tile_id=o.ogc_fid
+                )
+                SELECT jsonb_build_object(
+                  'type','FeatureCollection',
+                  'features', jsonb_agg(
+                    jsonb_build_object(
+                      'type','Feature',
+                      'geometry', ST_AsGeoJSON(geom)::jsonb,
+                      'properties', to_jsonb(data) - 'geom'
+                    )
+                  )
+                )::text
+                FROM data;""",
+                out_path=str(Path(out3))
+)
+
+
             print("\n🎉 ETL complete!")
             print(" -", out1)
             print(" -", out2)
+            print(" -", out3)
 
         else:
             print(f"ℹ️ Skipping analysis/exports: missing table {ookla_schema}.{ookla_table_bb}")
